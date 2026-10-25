@@ -1,0 +1,67 @@
+# Daily check, independent of the hosting account, that audit.naveenchandra.co.in still
+# serves the pinned scripts and still tells clients to run the pinned GitHub URL.
+# A failed run emails the repo owner and opens an "INTEGRITY ALERT <date>" issue.
+name: Live integrity check
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # daily, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PINNED: d4c87aa8e689c23ffadd2cff37ec75240c4021cf
+      SITE: https://audit.naveenchandra.co.in
+      UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
+    steps:
+      - name: Compare live site with the pinned commit
+        run: |
+          set -u
+          fetch() { curl -sfL --retry 4 --retry-delay 5 --retry-all-errors --max-time 30 -A "$UA" "$1"; }
+          problems=""
+
+          for f in grant-access.sh revoke-access.sh; do
+            if ! fetch "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$PINNED/$f" > "pinned-$f"; then
+              problems+="- pinned $f could not be downloaded from GitHub"$'\n'; continue
+            fi
+            if ! fetch "$SITE/$f" > "live-$f"; then
+              problems+="- $SITE/$f could not be downloaded"$'\n'; continue
+            fi
+            want=$(sha256sum < "pinned-$f" | cut -d' ' -f1)
+            got=$(sha256sum < "live-$f" | cut -d' ' -f1)
+            echo "$f  pinned=$want  live=$got"
+            [ "$want" = "$got" ] || problems+="- $f: live sha256 $got, pinned $want"$'\n'
+          done
+
+          expected="curl -sLO https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$PINNED/grant-access.sh"
+          if ! page=$(fetch "$SITE/"); then
+            problems+="- $SITE/ could not be downloaded"$'\n'
+          else
+            commands=$(grep -oE 'curl -sLO https?://[^ <"]+' <<<"$page" | sort -u)
+            echo "step-3 commands on the page:"; echo "$commands"
+            [ "$commands" = "$expected" ] || problems+="- step-3 command changed. Expected only: $expected"$'\n'"  Found: $(tr '\n' ' ' <<<"$commands")"$'\n'
+          fi
+
+          if [ -n "$problems" ]; then
+            { echo "Integrity check failed for $SITE at $(date -u '+%F %T') UTC."; echo; echo "$problems"
+              echo "Pinned commit: https://github.com/$GITHUB_REPOSITORY/tree/$PINNED"
+              echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; } > report.md
+            cat report.md
+            exit 1
+          fi
+          echo "All checks passed."
+
+      - name: Open an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f report.md ] || echo "The check step failed before writing a report. See $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > report.md
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "INTEGRITY ALERT $(date -u +%F)" --body-file report.md
