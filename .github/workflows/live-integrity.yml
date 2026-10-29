@@ -1,5 +1,7 @@
-# Daily check, independent of the hosting account, that audit.naveenchandra.co.in still
-# serves the pinned scripts and still tells clients to run the pinned GitHub URL.
+# Daily check, independent of the hosting account, that the Azure Cost Audit page still tells clients to run
+# the pinned GitHub URL, and that the old on-domain script URLs still return the pinned scripts (served directly,
+# or redirected to GitHub once naveenchandra.co.in/audit/ is retired). audit.naveenchandra.co.in was removed on
+# 2026-10-29; the audit is now a page on the main site.
 # A failed run emails the repo owner and opens an "INTEGRITY ALERT <date>" issue.
 name: Live integrity check
 
@@ -18,7 +20,8 @@ jobs:
     timeout-minutes: 10
     env:
       PINNED: d4c87aa8e689c23ffadd2cff37ec75240c4021cf
-      SITE: https://audit.naveenchandra.co.in
+      PAGE: https://naveenchandra.co.in/azure-cost-audit/
+      LEGACY: https://naveenchandra.co.in/audit
       UA: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36"
     steps:
       - name: Compare live site with the pinned commit
@@ -31,8 +34,8 @@ jobs:
             if ! fetch "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$PINNED/$f" > "pinned-$f"; then
               problems+="- pinned $f could not be downloaded from GitHub"$'\n'; continue
             fi
-            if ! fetch "$SITE/$f" > "live-$f"; then
-              problems+="- $SITE/$f could not be downloaded"$'\n'; continue
+            if ! fetch "$LEGACY/$f" > "live-$f"; then
+              problems+="- $LEGACY/$f could not be downloaded"$'\n'; continue
             fi
             want=$(sha256sum < "pinned-$f" | cut -d' ' -f1)
             got=$(sha256sum < "live-$f" | cut -d' ' -f1)
@@ -41,8 +44,8 @@ jobs:
           done
 
           expected="curl -sLO https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$PINNED/grant-access.sh"
-          if ! page=$(fetch "$SITE/"); then
-            problems+="- $SITE/ could not be downloaded"$'\n'
+          if ! page=$(fetch "$PAGE"); then
+            problems+="- $PAGE could not be downloaded"$'\n'
           else
             commands=$(grep -oE 'curl -sLO https?://[^ <"]+' <<<"$page" | sort -u)
             echo "step-3 commands on the page:"; echo "$commands"
@@ -50,7 +53,7 @@ jobs:
           fi
 
           if [ -n "$problems" ]; then
-            { echo "Integrity check failed for $SITE at $(date -u '+%F %T') UTC."; echo; echo "$problems"
+            { echo "Integrity check failed for $PAGE and $LEGACY/*.sh at $(date -u '+%F %T') UTC."; echo; echo "$problems"
               echo "Pinned commit: https://github.com/$GITHUB_REPOSITORY/tree/$PINNED"
               echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; } > report.md
             cat report.md
